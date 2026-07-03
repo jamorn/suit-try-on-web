@@ -1,8 +1,10 @@
 'use client';
 
-import VConsole from 'vconsole';
-if (typeof window !== 'undefined') {
-  new VConsole({ theme: 'dark' });
+// ✅ vConsole เฉพาะ development เท่านั้น
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  import('vconsole').then(({ default: VConsole }) => {
+    new VConsole({ theme: 'dark' });
+  });
 }
 
 import { useRef, useState, useEffect, useCallback } from 'react';
