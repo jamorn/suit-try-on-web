@@ -17,7 +17,7 @@ import type { SuitConfig, HUDPage, Landmark, PoseResult } from '@/lib/types';
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { videoRef, isReady, error } = useCamera();
+  const { videoRef, isReady, error, startCamera } = useCamera();
 
   // ✅ เก็บ landmark ล่าสุดใน ref — ไม่ใช้ useState เพื่อเลี่ยง re-render
   const latestLandmarksRef = useRef<Landmark[] | null>(null);
@@ -82,9 +82,10 @@ export default function Home() {
     });
   }, []);
 
-  // ✅ Render loop แยก — อ่านค่าจาก refs โดยตรง ไม่ผ่าน React state
+  // ✅ Render loop แยก — เริ่มเมื่อพร้อม (รูปโหลดเสร็จ + กล้องพร้อม)
+  const ready = !loading && isReady;
   useEffect(() => {
-    if (loading) return;
+    if (!ready) return;
 
     let running = true;
 
@@ -118,7 +119,7 @@ export default function Home() {
       running = false;
       cancelAnimationFrame(rafRef.current);
     };
-  }, [loading]);
+  }, [ready]);
 
   // ✅ FPS counter (แค่ตัวเลข ไม่เกี่ยวกับ canvas)
   useEffect(() => {
@@ -192,29 +193,20 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKey);
   }, [page, suits.length, sex, adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch, throttle]);
 
-  const handleStartCamera = async () => {
-    const video = videoRef.current;
-    if (video && video.srcObject) {
-      try {
-        await video.play();
-      } catch (e) {
-        console.error('❌ Manual play failed:', e);
-      }
-    }
+  const handleCameraClick = async () => {
+    // เริ่มกล้องเมื่อ user กด
+    await startCamera();
   };
 
-  if (loading || !isReady) {
+  // ✅ loading screen — แสดงจนกว่ารูปพร้อม
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white text-xl">
         <div className="text-center">
           <div className="animate-spin text-4xl mb-4">⚙️</div>
           <div className="space-y-2">
             <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
-            <p className="text-sm text-gray-400">
-              {!loading && !isReady
-                ? '🤖 กำลังเปิดกล้องและตั้งค่า AI WASM Model...'
-                : '🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...'}
-            </p>
+            <p className="text-sm text-gray-400">🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...</p>
           </div>
         </div>
       </div>
@@ -246,7 +238,6 @@ export default function Home() {
           autoPlay
           playsInline
           muted
-          onClick={handleStartCamera}
           className="w-full h-full -scale-x-100 rounded bg-black"
           style={{ objectFit: 'cover' }}
         />
@@ -257,10 +248,11 @@ export default function Home() {
           className="absolute top-0 left-0 w-full h-full -scale-x-100 pointer-events-none"
         />
 
+        {/* ✅ ปุ่มเริ่มกล้อง — user ต้องกดก่อน โดยเฉพาะบน mobile */}
         {!isReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50">
             <button
-              onClick={handleStartCamera}
+              onClick={handleCameraClick}
               className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
             >
               ▶️ เริ่มกล้อง
