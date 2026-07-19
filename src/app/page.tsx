@@ -24,12 +24,19 @@ export default function Home() {
   const imagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const rafRef = useRef<number>(0);
 
+  // ✅ AI WASM ตรวจจับเฟรมแรกสำเร็จแล้วหรือยัง
+  const [aiReady, setAiReady] = useState(false);
+
   // ✅ callback รับ pose จาก hook — เขียนลง ref โดยตรง
+  //    ถ้า aiReady ยังเป็น false → setAiReady(true) เพื่อปลดล็อก UI
   const handlePoseDetected = useCallback((result: PoseResult) => {
     if (result.landmarks?.[0]) {
       latestLandmarksRef.current = result.landmarks[0] as Landmark[];
+      if (!aiReady) {
+        setAiReady(true);
+      }
     }
-  }, []);
+  }, [aiReady]);
 
   usePoseLandmarker(videoRef, isReady, handlePoseDetected);
 
@@ -82,8 +89,8 @@ export default function Home() {
     });
   }, []);
 
-  // ✅ Render loop แยก — เริ่มเมื่อพร้อม (รูปโหลดเสร็จ + กล้องพร้อม)
-  const ready = !loading && isReady;
+  // ✅ Render loop แยก — เริ่มเมื่อพร้อม (รูป + กล้อง + AI พร้อม)
+  const ready = !loading && isReady && aiReady;
   useEffect(() => {
     if (!ready) return;
 
@@ -198,16 +205,43 @@ export default function Home() {
     await startCamera();
   };
 
-  // ✅ loading screen — แสดงจนกว่ารูปพร้อม
-  if (loading) {
+  // ✅ ระบบพร้อมเมื่อ: รูปครบ AND กล้องติด AND AI รันเฟรมแรกเสร็จ
+  const isSystemFullyReady = !loading && isReady && aiReady;
+
+  if (!isSystemFullyReady && !error) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white text-xl">
         <div className="text-center">
-          <div className="animate-spin text-4xl mb-4">⚙️</div>
-          <div className="space-y-2">
-            <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
-            <p className="text-sm text-gray-400">🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...</p>
-          </div>
+          {loading && (
+            <>
+              <div className="animate-spin text-4xl mb-4">⚙️</div>
+              <div className="space-y-2">
+                <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
+                <p className="text-sm text-gray-400">🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...</p>
+              </div>
+            </>
+          )}
+          {!loading && !isReady && (
+            <>
+              <div className="text-4xl mb-4">🕴️</div>
+              <button
+                onClick={handleCameraClick}
+                className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
+              >
+                ▶️ เริ่มกล้อง
+              </button>
+              <p className="text-sm text-gray-400 mt-3">📷 กรุณากดปุ่มเพื่อเปิดกล้องเว็บแคม...</p>
+            </>
+          )}
+          {!loading && isReady && !aiReady && (
+            <>
+              <div className="animate-spin text-4xl mb-4">🧠</div>
+              <div className="space-y-2">
+                <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
+                <p className="text-sm text-gray-400">🤖 โมเดล AI กำลังประมวลผลโครงร่าง...</p>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -247,18 +281,6 @@ export default function Home() {
           height={480}
           className="absolute top-0 left-0 w-full h-full -scale-x-100 pointer-events-none"
         />
-
-        {/* ✅ ปุ่มเริ่มกล้อง — user ต้องกดก่อน โดยเฉพาะบน mobile */}
-        {!isReady && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-            <button
-              onClick={handleCameraClick}
-              className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
-            >
-              ▶️ เริ่มกล้อง
-            </button>
-          </div>
-        )}
 
         {suits[suitIdx] && isReady && (
           <HUD

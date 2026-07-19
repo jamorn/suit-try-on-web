@@ -9,7 +9,6 @@ export function useCamera() {
   const streamRef = useRef<MediaStream | null>(null);
 
   const startCamera = useCallback(async () => {
-    // ป้องกันการเรียกซ้ำ
     if (streamRef.current) return;
 
     console.log('📷 useCamera: Setting up camera...');
@@ -68,7 +67,6 @@ export function useCamera() {
     }
   }, []);
 
-  // ✅ Cleanup เมื่อ component unmount
   useEffect(() => {
     return () => {
       console.log('🛑 Cleaning up camera');
