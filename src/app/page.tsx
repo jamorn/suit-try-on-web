@@ -202,47 +202,17 @@ export default function Home() {
   }, [page, suits.length, sex, adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch, throttle]);
 
   const handleCameraClick = async () => {
-    // เริ่มกล้องเมื่อ user กด
     await startCamera();
   };
 
-  // ✅ ระบบพร้อมเมื่อ: รูปครบ AND กล้องติด AND AI รันเฟรมแรกเสร็จ
-  const isSystemFullyReady = !loading && isReady && aiReady;
-
-  if (!isSystemFullyReady && !error) {
+  // ✅ loading screen — แค่ตอนโหลดรูปเท่านั้น
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white text-xl">
         <div className="text-center">
-          {loading && (
-            <>
-              <div className="animate-spin text-4xl mb-4">⚙️</div>
-              <div className="space-y-2">
-                <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
-                <p className="text-sm text-gray-400">🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...</p>
-              </div>
-            </>
-          )}
-          {!loading && !isReady && (
-            <>
-              <div className="text-4xl mb-4">🕴️</div>
-              <button
-                onClick={handleCameraClick}
-                className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
-              >
-                ▶️ เริ่มกล้อง
-              </button>
-              <p className="text-sm text-gray-400 mt-3">📷 กรุณากดปุ่มเพื่อเปิดกล้องเว็บแคม...</p>
-            </>
-          )}
-          {!loading && isReady && !aiReady && (
-            <>
-              <div className="animate-spin text-4xl mb-4">🧠</div>
-              <div className="space-y-2">
-                <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
-                <p className="text-sm text-gray-400">🤖 โมเดล AI กำลังประมวลผลโครงร่าง...</p>
-              </div>
-            </>
-          )}
+          <div className="animate-spin text-4xl mb-4">⚙️</div>
+          <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
+          <p className="text-sm text-gray-400 mt-2">🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...</p>
         </div>
       </div>
     );
@@ -283,7 +253,35 @@ export default function Home() {
           className="absolute top-0 left-0 w-full h-full -scale-x-100 pointer-events-none"
         />
 
-        {suits[suitIdx] && isReady && (
+        {/* ✅ ปุ่มเริ่มกล้อง — แสดงทับวิดีโอจนกว่ากล้องจะติด */}
+        {!isReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+            <div className="text-center">
+              <div className="text-4xl mb-4">🕴️</div>
+              <button
+                onClick={handleCameraClick}
+                className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
+              >
+                ▶️ เริ่มกล้อง
+              </button>
+              <p className="text-sm text-gray-400 mt-3">📷 กรุณากดปุ่มเพื่อเปิดกล้องเว็บแคม...</p>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ กำลังรอ AI — แสดง overlay ตอนกล้องติดแล้ว แต่ AI ยังไม่พร้อม */}
+        {isReady && !aiReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+            <div className="text-center">
+              <div className="animate-spin text-4xl mb-4">🧠</div>
+              <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
+              <p className="text-sm text-gray-400 mt-2">🤖 โมเดล AI กำลังประมวลผลโครงร่าง...</p>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ HUD — แสดงเมื่อทุกอย่างพร้อม */}
+        {aiReady && suits[suitIdx] && (
           <HUD
             fps={fps}
             page={page}
