@@ -1,7 +1,7 @@
 'use client';
 
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import type { Landmark } from '@/lib/types';
+import type { PoseResult } from '@/lib/types';
 
 let poseLandmarker: PoseLandmarker | null = null;
 let initPromise: Promise<PoseLandmarker> | null = null;
@@ -32,7 +32,6 @@ export async function initPoseLandmarker(): Promise<PoseLandmarker> {
       }
     }
 
-    // ทั้ง GPU และ CPU ล้มเหลว
     throw new Error('ไม่สามารถเริ่มต้น PoseLandmarker ได้ (GPU และ CPU ล้มเหลว)');
   })();
 
@@ -42,18 +41,25 @@ export async function initPoseLandmarker(): Promise<PoseLandmarker> {
 export async function detectPose(
   video: HTMLVideoElement,
   timestamp: number
-): Promise<{ landmarks: Landmark[][] } | null> {
+): Promise<PoseResult | null> {
   try {
-    const detector = await initPoseLandmarker();
-    const result = detector.detectForVideo(video, timestamp);
+    const landmarker = await initPoseLandmarker();
+    const results = landmarker.detectForVideo(video, timestamp);
 
-    if (!result || !result.landmarks || result.landmarks.length === 0) {
-      return null;
+    if (results.landmarks && results.landmarks.length > 0) {
+      return {
+        landmarks: results.landmarks.map((pose) =>
+          pose.map((lm) => ({
+            x: lm.x,
+            y: lm.y,
+            z: lm.z,
+            visibility: lm.visibility,
+          }))
+        ),
+      };
     }
 
-    return {
-      landmarks: result.landmarks as unknown as Landmark[][],
-    };
+    return null;
   } catch (err) {
     console.error('❌ detectPose error:', err);
     throw err;
