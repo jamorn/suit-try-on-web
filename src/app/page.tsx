@@ -28,15 +28,16 @@ export default function Home() {
   const [aiReady, setAiReady] = useState(false);
 
   // ✅ callback รับ pose จาก hook — เขียนลง ref โดยตรง
-  //    ถ้า aiReady ยังเป็น false → setAiReady(true) เพื่อปลดล็อก UI
+  //    ใช้ functional update เพื่อปลดล็อก aiReady แค่ครั้งแรก โดยไม่มี dependency
   const handlePoseDetected = useCallback((result: PoseResult) => {
     if (result.landmarks?.[0]) {
       latestLandmarksRef.current = result.landmarks[0] as Landmark[];
-      if (!aiReady) {
-        setAiReady(true);
-      }
+      setAiReady((prev) => {
+        if (!prev) return true;
+        return prev;
+      });
     }
-  }, [aiReady]);
+  }, []);
 
   usePoseLandmarker(videoRef, isReady, handlePoseDetected);
 
