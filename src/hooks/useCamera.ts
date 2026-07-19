@@ -9,7 +9,8 @@ export function useCamera() {
 
   useEffect(() => {
     console.log('📷 useCamera: Setting up camera...');
-    
+    let activeStream: MediaStream | null = null; // 👈 เก็บ stream ไว้ใน closure
+
     async function setupCamera() {
       try {
         console.log('📷 Requesting camera access...');
@@ -22,6 +23,8 @@ export function useCamera() {
           },
           audio: false
         });
+
+        activeStream = stream; // 👈 ผูกค่าไว้ใน closure
         
         console.log('✅ Camera stream obtained');
         
@@ -29,6 +32,7 @@ export function useCamera() {
         if (!video) {
           console.error('❌ Video element not found');
           setError('Video element not ready');
+          // ไม่ return activeStream ไว้ เพื่อให้ cleanup ปิด stream ได้
           return;
         }
 
@@ -68,8 +72,9 @@ export function useCamera() {
 
     return () => {
       console.log('🛑 Cleaning up camera');
-      if (videoRef.current?.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach((t) => t.stop());
+      // ✅ ปิด stream จากตัวแปรใน closure โดยตรง —ปลอดภัย ไม่พึ่งพา DOM ref
+      if (activeStream) {
+        activeStream.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);

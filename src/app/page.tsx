@@ -13,14 +13,27 @@ import { usePoseLandmarker } from '@/hooks/usePoseLandmarker';
 import { calculateSuitRect, drawSuit } from '@/lib/suit-renderer';
 import { SUIT_DATA, DEFAULT_SEX } from '@/lib/config';
 import HUD from '@/components/HUD';
-import type { SuitConfig, HUDPage, Landmark } from '@/lib/types';
+import type { SuitConfig, HUDPage, Landmark, PoseResult } from '@/lib/types';
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { videoRef, isReady, error } = useCamera();
-  const poseResult = usePoseLandmarker(videoRef, isReady);
 
-  // ✅ Throttle ป้องกันแตะซ้ำบน iPad (300ms)
+  // ✅ เก็บ landmark ล่าสุดใน ref — ไม่ใช้ useState เพื่อเลี่ยง re-render
+  const latestLandmarksRef = useRef<Landmark[] | null>(null);
+  const imagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const rafRef = useRef<number>(0);
+
+  // ✅ callback รับ pose จาก hook — เขียนลง ref โดยตรง
+  const handlePoseDetected = useCallback((result: PoseResult) => {
+    if (result.landmarks?.[0]) {
+      latestLandmarksRef.current = result.landmarks[0] as Landmark[];
+    }
+  }, []);
+
+  usePoseLandmarker(videoRef, isReady, handlePoseDetected);
+
+  // ✅ Throttle ป้องกันแตะซ้ำบน iPad (350ms)
   const lastTapRef = useRef(0);
   const throttle = useCallback((fn: () => void, ms = 350) => {
     const now = Date.now();
@@ -38,22 +51,27 @@ export default function Home() {
   const [sex, setSex] = useState<'M' | 'F'>(DEFAULT_SEX);
   const [page, setPage] = useState<HUDPage>('basic');
   const [fps, setFps] = useState(0);
-  const [images, setImages] = useState<Map<string, HTMLImageElement>>(new Map());
   const [loading, setLoading] = useState(true);
+
+  // ✅ อัปเดต refs เมื่อ state เปลี่ยน (เพื่อให้ render loop อ่านค่าล่าสุดได้)
+  const suitsRef = useRef(suits);
+  suitsRef.current = suits;
+  const suitIdxRef = useRef(suitIdx);
+  suitIdxRef.current = suitIdx;
 
   // ✅ โหลดรูปทุกชุด (4 ชุด)
   useEffect(() => {
     const map = new Map<string, HTMLImageElement>();
     let loaded = 0;
     const total = SUIT_DATA.length;
-    
+
     SUIT_DATA.forEach((s) => {
       const img = new Image();
       img.onload = () => {
         map.set(s.path, img);
         loaded++;
         if (loaded === total) {
-          setImages(new Map(map));
+          imagesRef.current = new Map(map);
           setLoading(false);
         }
       };
@@ -64,7 +82,45 @@ export default function Home() {
     });
   }, []);
 
-  // ✅ FPS counter
+  // ✅ Render loop แยก — อ่านค่าจาก refs โดยตรง ไม่ผ่าน React state
+  useEffect(() => {
+    if (loading) return;
+
+    let running = true;
+
+    const render = () => {
+      if (!running) return;
+
+      const canvas = canvasRef.current;
+      const landmarks = latestLandmarksRef.current;
+      const ctx = canvas?.getContext('2d');
+      const currentSuits = suitsRef.current;
+      const idx = suitIdxRef.current;
+      const config = currentSuits[idx];
+      const images = imagesRef.current;
+      const img = config ? images.get(config.path) : undefined;
+
+      if (ctx && landmarks && config && img && canvas) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const rect = calculateSuitRect(
+          landmarks,
+          canvas.width, canvas.height, config, img
+        );
+        drawSuit(ctx, img, rect);
+      }
+
+      rafRef.current = requestAnimationFrame(render);
+    };
+
+    rafRef.current = requestAnimationFrame(render);
+
+    return () => {
+      running = false;
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [loading]);
+
+  // ✅ FPS counter (แค่ตัวเลข ไม่เกี่ยวกับ canvas)
   useEffect(() => {
     let count = 0;
     let last = performance.now();
@@ -83,27 +139,6 @@ export default function Home() {
     requestAnimationFrame(tick);
     return () => { running = false; };
   }, []);
-
-  // ✅ วาดชุดบน canvas
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !poseResult?.landmarks?.[0]) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const config = suits[suitIdx];
-    if (!config) return;
-    
-    const img = images.get(config.path);
-    if (!img) return;
-    
-    const rect = calculateSuitRect(
-      poseResult.landmarks[0] as Landmark[],
-      canvas.width, canvas.height, config, img
-    );
-    drawSuit(ctx, img, rect);
-  }, [poseResult, suits, suitIdx, images]);
 
   // ✅ ฟังก์ชันปรับแต่ง — แก้ไข suits[suitIdx] โดยตรง
   const updateSuit = useCallback(
@@ -155,7 +190,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, suits.length, sex, adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch]);
+  }, [page, suits.length, sex, adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch, throttle]);
 
   const handleStartCamera = async () => {
     const video = videoRef.current;
@@ -168,12 +203,19 @@ export default function Home() {
     }
   };
 
-  if (loading) {
+  if (loading || !isReady) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white text-xl">
         <div className="text-center">
-          <div className="animate-spin text-4xl mb-4">⏳</div>
-          <div>กำลังโหลด...</div>
+          <div className="animate-spin text-4xl mb-4">⚙️</div>
+          <div className="space-y-2">
+            <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
+            <p className="text-sm text-gray-400">
+              {!loading && !isReady
+                ? '🤖 กำลังเปิดกล้องและตั้งค่า AI WASM Model...'
+                : '🖼️ กำลังโหลดทรัพยากรเสื้อผ้า...'}
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -234,9 +276,7 @@ export default function Home() {
             suitIndex={suitIdx}
             totalSuits={suits.length}
             onPageChange={setPage}
-            // ✅ วนได้ 4 ชุด (หน่วง 350ms)
             onSwitchSuit={() => throttle(() => setSuitIdx((i) => (i + 1) % suits.length))}
-            // ✅ เปลี่ยนเพศ → jump ไปชุดแรกของเพศนั้น (หน่วง 350ms)
             onSwitchSex={() => throttle(() => {
               const newSex = sex === 'M' ? 'F' : 'M';
               setSex(newSex);

@@ -1,15 +1,17 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { detectPose } from '@/lib/mediapipe';
 import type { PoseResult } from '@/lib/types';
 
 export function usePoseLandmarker(
   videoRef: React.RefObject<HTMLVideoElement | null>,
-  isReady: boolean
+  isReady: boolean,
+  onPoseDetected: (result: PoseResult) => void
 ) {
-  const [result, setResult] = useState<PoseResult | null>(null);
   const rafRef = useRef<number>(0);
+  const onPoseDetectedRef = useRef(onPoseDetected);
+  onPoseDetectedRef.current = onPoseDetected;
 
   useEffect(() => {
     if (!isReady) return;
@@ -25,7 +27,9 @@ export function usePoseLandmarker(
         if (ts !== lastTs) {
           lastTs = ts;
           const r = await detectPose(video, ts);
-          if (running) setResult(r);
+          if (running && r) {
+            onPoseDetectedRef.current(r);
+          }
         }
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -38,6 +42,4 @@ export function usePoseLandmarker(
       cancelAnimationFrame(rafRef.current);
     };
   }, [videoRef, isReady]);
-
-  return result;
 }
