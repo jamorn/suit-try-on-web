@@ -44,11 +44,11 @@ export default function Home() {
 
   usePoseLandmarker(videoRef, isReady, handlePoseDetected, handleMediaPipeError);
 
-  const lastTapRef = useRef(0);
-  const throttle = useCallback((fn: () => void, ms = 350) => {
+  const lastTapMapRef = useRef<Record<string, number>>({});
+  const throttle = useCallback((key: string, fn: () => void, ms = 350) => {
     const now = Date.now();
-    if (now - lastTapRef.current > ms) {
-      lastTapRef.current = now;
+    if (now - (lastTapMapRef.current[key] || 0) > ms) {
+      lastTapMapRef.current[key] = now;
       fn();
     }
   }, []);
@@ -110,17 +110,19 @@ export default function Home() {
       const images = imagesRef.current;
       const img = config ? images.get(config.path) : undefined;
 
-      if (ctx && landmarks && config && img && canvas) {
+      if (ctx && canvas) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const rect = calculateSuitRect(
-          landmarks,
-          canvas.width,
-          canvas.height,
-          config,
-          img
-        );
-        if (rect) {
-          drawSuit(ctx, img, rect);
+        if (landmarks && config && img) {
+          const rect = calculateSuitRect(
+            landmarks,
+            canvas.width,
+            canvas.height,
+            config,
+            img
+          );
+          if (rect) {
+            drawSuit(ctx, img, rect);
+          }
         }
       }
 
@@ -199,10 +201,10 @@ export default function Home() {
         adjSX, adjSY, resetStretch,
       } = handlersRef.current;
 
-      if (k === 'h') throttle(() => setPage((p) => (p === 'basic' ? 'tuning' : 'basic')));
-      else if (k === 's') throttle(() => setSuitIdx((i) => (i + 1) % suits.length));
+      if (k === 'h') throttle('page', () => setPage((p) => (p === 'basic' ? 'tuning' : 'basic')));
+      else if (k === 's') throttle('suit', () => setSuitIdx((i) => (i + 1) % suits.length));
       else if (k === 'f') {
-        throttle(() => {
+        throttle('sex', () => {
           const newSex = sex === 'M' ? 'F' : 'M';
           setSex(newSex);
           const firstIdx = SUIT_DATA.findIndex((s) => s.sex === newSex);
@@ -210,17 +212,17 @@ export default function Home() {
         });
       }
       else if (page === 'tuning') {
-        if (k === '[') throttle(() => adjX(-1), 80);
-        else if (k === ']') throttle(() => adjX(1), 80);
-        else if (k === 'i') throttle(() => adjY(-1), 80);
-        else if (k === 'k') throttle(() => adjY(1), 80);
-        else if (k === '9') throttle(resetY, 350);
-        else if (k === '0') throttle(resetX, 350);
-        else if (k === 'a') throttle(() => adjSX(-0.05), 80);
-        else if (k === 'd') throttle(() => adjSX(0.05), 80);
-        else if (k === 'w') throttle(() => adjSY(0.05), 80);
-        else if (k === 'x') throttle(() => adjSY(-0.05), 80);
-        else if (k === 'r') throttle(resetStretch, 350);
+        if (k === '[') throttle('adjX-', () => adjX(-1), 80);
+        else if (k === ']') throttle('adjX+', () => adjX(1), 80);
+        else if (k === 'i') throttle('adjY-', () => adjY(-1), 80);
+        else if (k === 'k') throttle('adjY+', () => adjY(1), 80);
+        else if (k === '9') throttle('resetY', resetY, 350);
+        else if (k === '0') throttle('resetX', resetX, 350);
+        else if (k === 'a') throttle('adjSX-', () => adjSX(-0.05), 80);
+        else if (k === 'd') throttle('adjSX+', () => adjSX(0.05), 80);
+        else if (k === 'w') throttle('adjSY+', () => adjSY(0.05), 80);
+        else if (k === 'x') throttle('adjSY-', () => adjSY(-0.05), 80);
+        else if (k === 'r') throttle('resetStretch', resetStretch, 350);
       }
     };
 
@@ -322,20 +324,20 @@ export default function Home() {
             suitIndex={suitIdx}
             totalSuits={suits.length}
             onPageChange={setPage}
-            onSwitchSuit={() => throttle(() => setSuitIdx((i) => (i + 1) % suits.length))}
-            onSwitchSex={() => throttle(() => {
+            onSwitchSuit={() => throttle('suit', () => setSuitIdx((i) => (i + 1) % suits.length))}
+            onSwitchSex={() => throttle('sex', () => {
               const newSex = sex === 'M' ? 'F' : 'M';
               setSex(newSex);
               const firstIdx = SUIT_DATA.findIndex((s) => s.sex === newSex);
               if (firstIdx !== -1) setSuitIdx(firstIdx);
             })}
-            onAdjX={(d) => throttle(() => adjX(d), 100)}
-            onAdjY={(d) => throttle(() => adjY(d), 100)}
-            onResetX={() => throttle(resetX, 350)}
-            onResetY={() => throttle(resetY, 350)}
-            onAdjSX={(d) => throttle(() => adjSX(d), 100)}
-            onAdjSY={(d) => throttle(() => adjSY(d), 100)}
-            onResetStretch={() => throttle(resetStretch, 350)}
+            onAdjX={(d) => throttle('adjX', () => adjX(d), 100)}
+            onAdjY={(d) => throttle('adjY', () => adjY(d), 100)}
+            onResetX={() => throttle('resetX', resetX, 350)}
+            onResetY={() => throttle('resetY', resetY, 350)}
+            onAdjSX={(d) => throttle('adjSX', () => adjSX(d), 100)}
+            onAdjSY={(d) => throttle('adjSY', () => adjSY(d), 100)}
+            onResetStretch={() => throttle('resetStretch', resetStretch, 350)}
           />
         )}
       </div>
