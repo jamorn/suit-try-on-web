@@ -1,3 +1,4 @@
+// src/hooks/useCamera.ts
 'use client';
 
 import { useRef, useState, useCallback, useEffect } from 'react';

@@ -1,3 +1,4 @@
+// src/lib/types.ts
 export interface SuitConfig {
   path: string;
   order: number;

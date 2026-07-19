@@ -1,3 +1,4 @@
+// src/lib/config.ts
 import type { SuitConfig } from './types';
 
 export const SUIT_DATA: SuitConfig[] = [

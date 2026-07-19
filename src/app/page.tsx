@@ -1,7 +1,7 @@
 'use client';
 
 // ✅ vConsole เฉพาะ development เท่านั้น
-if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
   import('vconsole').then(({ default: VConsole }) => {
     new VConsole({ theme: 'dark' });
   });
@@ -27,19 +27,25 @@ export default function Home() {
   // ✅ AI WASM ตรวจจับเฟรมแรกสำเร็จแล้วหรือยัง
   const [aiReady, setAiReady] = useState(false);
 
+  // ✅ MediaPipe Error Recovery
+  const [mediaPipeError, setMediaPipeError] = useState(false);
+
   // ✅ callback รับ pose จาก hook — เขียนลง ref โดยตรง
   //    ใช้ functional update เพื่อปลดล็อก aiReady แค่ครั้งแรก โดยไม่มี dependency
   const handlePoseDetected = useCallback((result: PoseResult) => {
     if (result.landmarks?.[0]) {
       latestLandmarksRef.current = result.landmarks[0] as Landmark[];
-      setAiReady((prev) => {
-        if (!prev) return true;
-        return prev;
-      });
+      setAiReady((prev) => (!prev ? true : prev));
+      setMediaPipeError(false); // ✅ reset error เมื่อ landmark มา
     }
   }, []);
 
-  usePoseLandmarker(videoRef, isReady, handlePoseDetected);
+  const handlePoseError = useCallback((err: Error) => {
+    console.error('MediaPipe error:', err);
+    setMediaPipeError(true);
+  }, []);
+
+  usePoseLandmarker(videoRef, isReady, handlePoseDetected, handlePoseError);
 
   // ✅ Throttle ป้องกันแตะซ้ำบน iPad (350ms)
   const lastTapRef = useRef(0);
@@ -67,27 +73,33 @@ export default function Home() {
   const suitIdxRef = useRef(suitIdx);
   suitIdxRef.current = suitIdx;
 
-  // ✅ โหลดรูปทุกชุด (4 ชุด)
+  // ✅ โหลดรูปทุกชุด (4 ชุด) — ใช้ Promise.allSettled ทนทานต่อภาพที่ fail
   useEffect(() => {
-    const map = new Map<string, HTMLImageElement>();
-    let loaded = 0;
-    const total = SUIT_DATA.length;
+    const loadImage = (src: string): Promise<HTMLImageElement> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    };
 
-    SUIT_DATA.forEach((s) => {
-      const img = new Image();
-      img.onload = () => {
-        map.set(s.path, img);
-        loaded++;
-        if (loaded === total) {
-          imagesRef.current = new Map(map);
-          setLoading(false);
+    Promise.allSettled(SUIT_DATA.map((s) => loadImage(s.path)))
+      .then((results) => {
+        const map = new Map<string, HTMLImageElement>();
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') {
+            map.set(SUIT_DATA[i].path, r.value);
+          } else {
+            console.error(`❌ Failed: ${SUIT_DATA[i].path}`);
+          }
+        });
+        if (map.size === 0) {
+          console.error('❌ All suit images failed to load');
         }
-      };
-      img.onerror = () => {
-        console.error(`❌ Failed: ${s.path}`);
-      };
-      img.src = s.path;
-    });
+        imagesRef.current = map;
+        setLoading(false);
+      });
   }, []);
 
   // ✅ Render loop แยก — เริ่มเมื่อพร้อม (รูป + กล้อง + AI พร้อม)
@@ -115,7 +127,9 @@ export default function Home() {
           landmarks,
           canvas.width, canvas.height, config, img
         );
-        drawSuit(ctx, img, rect);
+        if (rect) {
+          drawSuit(ctx, img, rect);
+        }
       }
 
       rafRef.current = requestAnimationFrame(render);
@@ -123,9 +137,20 @@ export default function Home() {
 
     rafRef.current = requestAnimationFrame(render);
 
+    // ✅ Visibility handling — หยุด render เมื่อ tab ซ่อน
+    const handleVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(rafRef.current);
+      } else {
+        rafRef.current = requestAnimationFrame(render);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       running = false;
       cancelAnimationFrame(rafRef.current);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [ready]);
 
@@ -169,10 +194,18 @@ export default function Home() {
   const adjSY = useCallback((d: number) => updateSuit((s) => ({ ...s, stretchY: Math.round(Math.max(0.5, Math.min(2, s.stretchY + d)) * 100) / 100 })), [updateSuit]);
   const resetStretch = useCallback(() => updateSuit((s) => ({ ...s, stretchX: 1, stretchY: 1 })), [updateSuit]);
 
-  // ✅ Keyboard controls
+  // ✅ Keyboard controls — ใช้ ref pattern ลด dependencies
+  const handlersRef = useRef({ adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch });
+  handlersRef.current = { adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
+      const {
+        adjX, adjY, resetX, resetY,
+        adjSX, adjSY, resetStretch,
+      } = handlersRef.current;
+
       if (k === 'h') throttle(() => setPage((p) => (p === 'basic' ? 'tuning' : 'basic')));
       else if (k === 's') throttle(() => setSuitIdx((i) => (i + 1) % suits.length));
       else if (k === 'f') {
@@ -199,7 +232,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, suits.length, sex, adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch, throttle]);
+  }, [page, suits.length, sex, throttle]);
 
   const handleCameraClick = async () => {
     await startCamera();
@@ -237,7 +270,7 @@ export default function Home() {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-900">
-      <div className="relative" style={{ width: 640, height: 480 }}>
+      <div className="relative max-w-[640px] w-full aspect-[4/3] mx-auto">
         <video
           ref={videoRef}
           autoPlay
@@ -251,6 +284,8 @@ export default function Home() {
           width={640}
           height={480}
           className="absolute top-0 left-0 w-full h-full -scale-x-100 pointer-events-none"
+          aria-label="Virtual try-on canvas"
+          role="img"
         />
 
         {/* ✅ ปุ่มเริ่มกล้อง — แสดงทับวิดีโอจนกว่ากล้องจะติด */}
@@ -261,6 +296,7 @@ export default function Home() {
               <button
                 onClick={handleCameraClick}
                 className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
+                aria-label="เริ่มกล้องเว็บแคม"
               >
                 ▶️ เริ่มกล้อง
               </button>
@@ -276,6 +312,17 @@ export default function Home() {
               <div className="animate-spin text-4xl mb-4">🧠</div>
               <p className="font-bold">กำลังเตรียมความพร้อมของระบบ...</p>
               <p className="text-sm text-gray-400 mt-2">🤖 โมเดล AI กำลังประมวลผลโครงร่าง...</p>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ MediaPipe Error — แสดง overlay เมื่อ detect ล้มเหลว */}
+        {mediaPipeError && isReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-900/60 z-10">
+            <div className="text-center p-4">
+              <div className="text-4xl mb-4">⚠️</div>
+              <p className="font-bold">ระบบ AI มีปัญหา</p>
+              <p className="text-sm text-gray-300 mt-2 px-4">กรุณาลองใหม่อีกครั้ง หรือรีเฟรชหน้าเว็บ</p>
             </div>
           </div>
         )}

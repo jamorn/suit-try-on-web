@@ -1,42 +1,61 @@
+'use client';
+
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import type { PoseResult } from './types';
+import type { Landmark } from '@/lib/types';
 
 let poseLandmarker: PoseLandmarker | null = null;
+let initPromise: Promise<PoseLandmarker> | null = null;
 
 export async function initPoseLandmarker(): Promise<PoseLandmarker> {
   if (poseLandmarker) return poseLandmarker;
+  if (initPromise) return initPromise;
 
-  const vision = await FilesetResolver.forVisionTasks('/wasm');
+  initPromise = (async () => {
+    const vision = await FilesetResolver.forVisionTasks('/wasm');
 
-  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: '/assets/pose_landmarker_lite.task',
-      delegate: 'GPU',
-    },
-    runningMode: 'VIDEO',
-    numPoses: 1,
-  });
+    // ✅ ลอง GPU ก่อน, fallback ไป CPU
+    const delegates: ('GPU' | 'CPU')[] = ['GPU', 'CPU'];
+    for (const delegate of delegates) {
+      try {
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: '/assets/pose_landmarker_lite.task',
+            delegate,
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+        });
+        console.log(`✅ PoseLandmarker initialized with ${delegate} delegate`);
+        return poseLandmarker;
+      } catch (e) {
+        console.warn(`⚠️ ${delegate} delegate failed:`, e);
+      }
+    }
 
-  return poseLandmarker;
+    // ทั้ง GPU และ CPU ล้มเหลว
+    throw new Error('ไม่สามารถเริ่มต้น PoseLandmarker ได้ (GPU และ CPU ล้มเหลว)');
+  })();
+
+  return initPromise;
 }
 
 export async function detectPose(
   video: HTMLVideoElement,
   timestamp: number
-): Promise<PoseResult | null> {
+): Promise<{ landmarks: Landmark[][] } | null> {
   try {
-    const landmarker = await initPoseLandmarker();
-    const results = landmarker.detectForVideo(video, timestamp);
-    if (results.landmarks && results.landmarks.length > 0) {
-      return {
-        landmarks: results.landmarks.map((pose) =>
-          pose.map((lm) => ({ x: lm.x, y: lm.y, z: lm.z, visibility: lm.visibility }))
-        ),
-      };
+    const detector = await initPoseLandmarker();
+    const result = detector.detectForVideo(video, timestamp);
+
+    if (!result || !result.landmarks || result.landmarks.length === 0) {
+      return null;
     }
-    return null;
-  } catch (e) {
-    console.error('Pose detection error:', e);
-    return null;
+
+    return {
+      landmarks: result.landmarks as unknown as Landmark[][],
+    };
+  } catch (err) {
+    console.error('❌ detectPose error:', err);
+    throw err;
   }
 }
