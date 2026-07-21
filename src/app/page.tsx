@@ -81,8 +81,10 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [canvasSize, setCanvasSize] = useState({ width: 640, height: 480 });
 
-  const suitIdx = suitIdxBySex[sex];
   const currentSuits = SUIT_DATA.filter((s) => s.sex === sex);
+  const suitIdx = currentSuits.length > 0
+    ? Math.min(suitIdxBySex[sex], currentSuits.length - 1)
+    : 0;
   const currentSuit = currentSuits[suitIdx];
 
   // Refs สำหรับ render loop
@@ -291,19 +293,24 @@ export default function Home() {
 
       if (k === 'h')
         throttle('page', () => setPage((p) => (p === 'basic' ? 'tuning' : 'basic')));
-      else if (k === 's')
-        throttle('suit', () =>
+            else if (k === 's')
+        throttle('suit', () => {
+          const suits = SUIT_DATA.filter((s) => s.sex === sexRef.current);
           setSuitIdxBySex((prev) => ({
             ...prev,
-            [sexRef.current]: (prev[sexRef.current] + 1) % currentSuits.length,
-          }))
-        );
+            [sexRef.current]: (prev[sexRef.current] + 1) % suits.length,
+          }));
+        });
       else if (k === 'f') {
         throttle('sex', () => {
           setSex((prev) => {
             const newSex = prev === 'M' ? 'F' : 'M';
-            const firstIdx = getFirstSuitIndex(newSex);
-            setSuitIdxBySex((idx) => ({ ...idx, [newSex]: firstIdx }));
+            const suits = SUIT_DATA.filter((s) => s.sex === newSex);
+            const idx = Math.min(
+              suitIdxBySex[newSex] || 0,
+              suits.length - 1
+            );
+            setSuitIdxBySex((prevIdx) => ({ ...prevIdx, [newSex]: idx }));
             return newSex;
           });
         });
@@ -415,24 +422,29 @@ export default function Home() {
           <HUD
             fps={fps}
             page={page}
-            suit={{ ...currentSuit, ...(suitAdjustments[currentSuit.path] || {}) }}
+            suit={{ ...currentSuit, ...(suitAdjustments[currentSuit?.path] || {}) }}
             suitIndex={suitIdx}
             totalSuits={currentSuits.length}
             onPageChange={setPage}
             onSwitchSuit={() =>
-              throttle('suit', () =>
+              throttle('suit', () => {
+                const suits = SUIT_DATA.filter((s) => s.sex === sex);
                 setSuitIdxBySex((prev) => ({
                   ...prev,
-                  [sex]: (prev[sex] + 1) % currentSuits.length,
-                }))
-              )
+                  [sex]: (prev[sex] + 1) % suits.length,
+                }));
+              })
             }
             onSwitchSex={() =>
               throttle('sex', () => {
                 setSex((prev) => {
                   const newSex = prev === 'M' ? 'F' : 'M';
-                  const firstIdx = getFirstSuitIndex(newSex);
-                  setSuitIdxBySex((idx) => ({ ...idx, [newSex]: firstIdx }));
+                  const suits = SUIT_DATA.filter((s) => s.sex === newSex);
+                  const idx = Math.min(
+                    suitIdxBySex[newSex] || 0,
+                    suits.length - 1
+                  );
+                  setSuitIdxBySex((prevIdx) => ({ ...prevIdx, [newSex]: idx }));
                   return newSex;
                 });
               })
