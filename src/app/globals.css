@@ -1,8 +1,9 @@
+/* src/app/globals.css */
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
@@ -12,15 +13,55 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ปิดการ highlight บน mobile */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ป้องกันการเลือก text บน HUD */
+.select-none {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ปรับแต่ง scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+/* ป้องกันการ zoom บน mobile */
+@supports (touch-action: manipulation) {
+  body {
+    touch-action: manipulation;
   }
 }
 
+/* ปรับแต่ง focus ring สำหรับ accessibility */
+:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: 2px;
+}
+
+/* ป้องกันการ pull-to-refresh บน mobile */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  overscroll-behavior-y: none;
+}
+
+/* ปรับแต่ง canvas ให้ sharp บน retina display */
+canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }

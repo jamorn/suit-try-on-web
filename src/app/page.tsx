@@ -1,9 +1,13 @@
+// src/app/page.tsx
 'use client';
 
-// ✅ vConsole เฉพาะ development เท่านั้น
+// vConsole เฉพาะ development เท่านั้น (singleton)
+let vConsoleInstance: unknown = null;
 if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
   import('vconsole').then(({ default: VConsole }) => {
-    new VConsole({ theme: 'dark' });
+    if (!vConsoleInstance) {
+      vConsoleInstance = new VConsole({ theme: 'dark' });
+    }
   });
 }
 
@@ -11,17 +15,20 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { useCamera } from '@/hooks/useCamera';
 import { usePoseLandmarker } from '@/hooks/usePoseLandmarker';
 import { calculateSuitRect, drawSuit } from '@/lib/suit-renderer';
-import { SUIT_DATA, DEFAULT_SEX } from '@/lib/config';
+import { SUIT_DATA, DEFAULT_SEX, getFirstSuitIndex } from '@/lib/config';
 import HUD from '@/components/HUD';
 import type { SuitConfig, HUDPage, Landmark, PoseResult } from '@/lib/types';
+import { ADJUST_THROTTLE_MS, THROTTLE_MS } from '@/lib/types';
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { videoRef, isReady, error, startCamera } = useCamera();
 
   const latestLandmarksRef = useRef<Landmark[] | null>(null);
   const imagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const rafRef = useRef<number>(0);
+  const fpsRafRef = useRef<number>(0);
 
   const [aiReady, setAiReady] = useState(false);
   const [mediaPipeError, setMediaPipeError] = useState(false);
@@ -29,10 +36,7 @@ export default function Home() {
   const handlePoseDetected = useCallback((result: PoseResult) => {
     if (result.landmarks?.[0]) {
       latestLandmarksRef.current = result.landmarks[0] as Landmark[];
-      setAiReady((prev) => {
-        if (!prev) return true;
-        return prev;
-      });
+      setAiReady(true);
       setMediaPipeError(false);
     }
   }, []);
@@ -42,57 +46,98 @@ export default function Home() {
     setMediaPipeError(true);
   }, []);
 
-  usePoseLandmarker(videoRef, isReady, handlePoseDetected, handleMediaPipeError);
+  usePoseLandmarker({
+    videoRef,
+    isReady,
+    onPoseDetected: handlePoseDetected,
+    onError: handleMediaPipeError,
+  });
 
+  // Throttle helper
   const lastTapMapRef = useRef<Record<string, number>>({});
-  const throttle = useCallback((key: string, fn: () => void, ms = 350) => {
-    const now = Date.now();
-    if (now - (lastTapMapRef.current[key] || 0) > ms) {
-      lastTapMapRef.current[key] = now;
-      fn();
-    }
-  }, []);
-
-  const [suits, setSuits] = useState<SuitConfig[]>(
-    SUIT_DATA.map((s) => ({ ...s }))
+  const throttle = useCallback(
+    (key: string, fn: () => void, ms = THROTTLE_MS) => {
+      const now = performance.now();
+      if (now - (lastTapMapRef.current[key] || 0) > ms) {
+        lastTapMapRef.current[key] = now;
+        fn();
+      }
+    },
+    []
   );
-  const [suitIdx, setSuitIdx] = useState(0);
+
+  // State แยกตามเพศ (reset เมื่อเปลี่ยนเพศ)
   const [sex, setSex] = useState<'M' | 'F'>(DEFAULT_SEX);
+  const [suitIdxBySex, setSuitIdxBySex] = useState<Record<'M' | 'F', number>>({
+    M: 0,
+    F: 0,
+  });
+  const [suitAdjustments, setSuitAdjustments] = useState<
+    Record<string, Partial<SuitConfig>>
+  >({});
+
   const [page, setPage] = useState<HUDPage>('basic');
   const [fps, setFps] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [canvasSize, setCanvasSize] = useState({ width: 640, height: 480 });
 
-  const suitsRef = useRef(suits);
-  suitsRef.current = suits;
+  const suitIdx = suitIdxBySex[sex];
+  const currentSuits = SUIT_DATA.filter((s) => s.sex === sex);
+  const currentSuit = currentSuits[suitIdx];
+
+  // Refs สำหรับ render loop
   const suitIdxRef = useRef(suitIdx);
+  const sexRef = useRef(sex);
+  const adjustmentsRef = useRef(suitAdjustments);
   suitIdxRef.current = suitIdx;
+  sexRef.current = sex;
+  adjustmentsRef.current = suitAdjustments;
 
+  // ResizeObserver สำหรับ responsive canvas
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        setCanvasSize({ width: Math.round(width), height: Math.round(height) });
+      }
+    });
+
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // โหลดรูปภาพ
   useEffect(() => {
     const loadImage = (src: string): Promise<HTMLImageElement> => {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
-        img.onerror = reject;
+        img.onerror = () => reject(new Error(`Failed to load: ${src}`));
         img.src = src;
       });
     };
 
-    Promise.allSettled(SUIT_DATA.map((s) => loadImage(s.path))).then((results) => {
-      const map = new Map<string, HTMLImageElement>();
-      results.forEach((result, i) => {
-        if (result.status === 'fulfilled') {
-          map.set(SUIT_DATA[i].path, result.value);
-        } else {
-          console.error(`❌ Failed to load: ${SUIT_DATA[i].path}`);
-        }
-      });
-      imagesRef.current = map;
-      setLoading(false);
-    });
+    Promise.allSettled(SUIT_DATA.map((s) => loadImage(s.path))).then(
+      (results) => {
+        const map = new Map<string, HTMLImageElement>();
+        results.forEach((result, i) => {
+          if (result.status === 'fulfilled') {
+            map.set(SUIT_DATA[i].path, result.value);
+          } else {
+            console.error(`❌ Failed to load: ${SUIT_DATA[i].path}`);
+          }
+        });
+        imagesRef.current = map;
+        setLoading(false);
+      }
+    );
   }, []);
 
   const ready = !loading && isReady && aiReady;
 
+  // Render loop
   useEffect(() => {
     if (!ready) return;
 
@@ -104,20 +149,23 @@ export default function Home() {
       const canvas = canvasRef.current;
       const landmarks = latestLandmarksRef.current;
       const ctx = canvas?.getContext('2d');
-      const currentSuits = suitsRef.current;
       const idx = suitIdxRef.current;
-      const config = currentSuits[idx];
+      const currentSex = sexRef.current;
+      const suits = SUIT_DATA.filter((s) => s.sex === currentSex);
+      const config = suits[idx];
+      const adj = adjustmentsRef.current[config?.path] || {};
+      const mergedConfig = config ? { ...config, ...adj } : null;
       const images = imagesRef.current;
-      const img = config ? images.get(config.path) : undefined;
+      const img = mergedConfig ? images.get(mergedConfig.path) : undefined;
 
       if (ctx && canvas) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (landmarks && config && img) {
+        if (landmarks && mergedConfig && img) {
           const rect = calculateSuitRect(
             landmarks,
             canvas.width,
             canvas.height,
-            config,
+            mergedConfig,
             img
           );
           if (rect) {
@@ -147,6 +195,7 @@ export default function Home() {
     };
   }, [ready]);
 
+  // FPS counter
   useEffect(() => {
     let count = 0;
     let last = performance.now();
@@ -161,57 +210,104 @@ export default function Home() {
         count = 0;
         last = now;
       }
-      requestAnimationFrame(tick);
+      fpsRafRef.current = requestAnimationFrame(tick);
     };
 
-    requestAnimationFrame(tick);
+    fpsRafRef.current = requestAnimationFrame(tick);
     return () => {
       running = false;
+      cancelAnimationFrame(fpsRafRef.current);
     };
   }, []);
 
+  // Update suit adjustment
   const updateSuit = useCallback(
-    (fn: (s: SuitConfig) => SuitConfig) => {
-      setSuits((prev) => {
-        const next = [...prev];
-        next[suitIdx] = fn(next[suitIdx]);
-        return next;
+    (fn: (s: SuitConfig) => Partial<SuitConfig>) => {
+      if (!currentSuit) return;
+      setSuitAdjustments((prev) => {
+        const current = prev[currentSuit.path] || {};
+        const updated = { ...current, ...fn({ ...currentSuit, ...current }) };
+        return { ...prev, [currentSuit.path]: updated };
       });
     },
-    [suitIdx]
+    [currentSuit]
   );
 
-  const adjX = useCallback((d: number) => updateSuit((s) => ({ ...s, xOffset: s.xOffset + d })), [updateSuit]);
-  const adjY = useCallback((d: number) => updateSuit((s) => ({ ...s, yOffset: s.yOffset + d })), [updateSuit]);
-  const resetX = useCallback(() => updateSuit((s) => ({ ...s, xOffset: 0 })), [updateSuit]);
-  const resetY = useCallback(() => updateSuit((s) => ({ ...s, yOffset: 0 })), [updateSuit]);
-  const adjSX = useCallback((d: number) => updateSuit((s) => ({ ...s, stretchX: Math.round(Math.max(0.5, Math.min(2, s.stretchX + d)) * 100) / 100 })), [updateSuit]);
-  const adjSY = useCallback((d: number) => updateSuit((s) => ({ ...s, stretchY: Math.round(Math.max(0.5, Math.min(2, s.stretchY + d)) * 100) / 100 })), [updateSuit]);
-  const resetStretch = useCallback(() => updateSuit((s) => ({ ...s, stretchX: 1, stretchY: 1 })), [updateSuit]);
+  const adjX = useCallback(
+    (d: number) =>
+      updateSuit((s) => ({
+        xOffsetPercent: Math.max(-0.1, Math.min(0.1, s.xOffsetPercent + d * 0.001)),
+      })),
+    [updateSuit]
+  );
+  const adjY = useCallback(
+    (d: number) =>
+      updateSuit((s) => ({
+        yOffsetPercent: Math.max(-0.1, Math.min(0.1, s.yOffsetPercent + d * 0.001)),
+      })),
+    [updateSuit]
+  );
+  const resetX = useCallback(
+    () => updateSuit(() => ({ xOffsetPercent: 0 })),
+    [updateSuit]
+  );
+  const resetY = useCallback(
+    () => updateSuit(() => ({ yOffsetPercent: 0 })),
+    [updateSuit]
+  );
+  const adjSX = useCallback(
+    (d: number) =>
+      updateSuit((s) => ({
+        stretchX: Math.round(Math.max(0.5, Math.min(2, s.stretchX + d)) * 100) / 100,
+      })),
+    [updateSuit]
+  );
+  const adjSY = useCallback(
+    (d: number) =>
+      updateSuit((s) => ({
+        stretchY: Math.round(Math.max(0.5, Math.min(2, s.stretchY + d)) * 100) / 100,
+      })),
+    [updateSuit]
+  );
+  const resetStretch = useCallback(
+    () => updateSuit(() => ({ stretchX: 1, stretchY: 1 })),
+    [updateSuit]
+  );
 
-  // ✅ Keyboard controls — ref pattern ลด dependencies
-  const handlersRef = useRef({ adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch });
-  handlersRef.current = { adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch };
+  // Keyboard controls
+  const handlersRef = useRef({
+    adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch,
+  });
+  handlersRef.current = {
+    adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch,
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       const {
-        adjX, adjY, resetX, resetY,
-        adjSX, adjSY, resetStretch,
+        adjX, adjY, resetX, resetY, adjSX, adjSY, resetStretch,
       } = handlersRef.current;
 
-      if (k === 'h') throttle('page', () => setPage((p) => (p === 'basic' ? 'tuning' : 'basic')));
-      else if (k === 's') throttle('suit', () => setSuitIdx((i) => (i + 1) % suits.length));
+      if (k === 'h')
+        throttle('page', () => setPage((p) => (p === 'basic' ? 'tuning' : 'basic')));
+      else if (k === 's')
+        throttle('suit', () =>
+          setSuitIdxBySex((prev) => ({
+            ...prev,
+            [sexRef.current]: (prev[sexRef.current] + 1) % currentSuits.length,
+          }))
+        );
       else if (k === 'f') {
         throttle('sex', () => {
-          const newSex = sex === 'M' ? 'F' : 'M';
-          setSex(newSex);
-          const firstIdx = SUIT_DATA.findIndex((s) => s.sex === newSex);
-          if (firstIdx !== -1) setSuitIdx(firstIdx);
+          setSex((prev) => {
+            const newSex = prev === 'M' ? 'F' : 'M';
+            const firstIdx = getFirstSuitIndex(newSex);
+            setSuitIdxBySex((idx) => ({ ...idx, [newSex]: firstIdx }));
+            return newSex;
+          });
         });
-      }
-      else if (page === 'tuning') {
+      } else if (page === 'tuning') {
         if (k === '[') throttle('adjX-', () => adjX(-1), 80);
         else if (k === ']') throttle('adjX+', () => adjX(1), 80);
         else if (k === 'i') throttle('adjY-', () => adjY(-1), 80);
@@ -228,11 +324,7 @@ export default function Home() {
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, suits.length, sex, throttle]);
-
-  const handleCameraClick = async () => {
-    await startCamera();
-  };
+  }, [page, currentSuits.length, throttle]);
 
   if (loading) {
     return (
@@ -254,7 +346,7 @@ export default function Home() {
           <div className="text-xl mb-4">{error}</div>
           <button
             onClick={() => window.location.reload()}
-            className="px-6 py-3 bg-blue-600 rounded hover:bg-blue-500"
+            className="px-6 py-3 bg-blue-600 rounded hover:bg-blue-500 transition-colors"
           >
             รีเฟรชหน้าเว็บ
           </button>
@@ -265,7 +357,10 @@ export default function Home() {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-900">
-      <div className="relative max-w-[640px] w-full aspect-[4/3] mx-auto">
+      <div
+        ref={containerRef}
+        className="relative max-w-[640px] w-full aspect-[4/3] mx-auto"
+      >
         <video
           ref={videoRef}
           autoPlay
@@ -276,8 +371,8 @@ export default function Home() {
         />
         <canvas
           ref={canvasRef}
-          width={640}
-          height={480}
+          width={canvasSize.width}
+          height={canvasSize.height}
           className="absolute top-0 left-0 w-full h-full -scale-x-100 pointer-events-none"
           aria-label="Virtual try-on canvas"
           role="img"
@@ -288,8 +383,8 @@ export default function Home() {
             <div className="text-center">
               <div className="text-4xl mb-4">🕴️</div>
               <button
-                onClick={handleCameraClick}
-                className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg"
+                onClick={startCamera}
+                className="px-8 py-4 bg-green-600 text-white text-xl rounded-lg hover:bg-green-500 shadow-lg transition-colors"
                 aria-label="เริ่มกล้องเว็บแคม"
               >
                 ▶️ เริ่มกล้อง
@@ -316,28 +411,39 @@ export default function Home() {
           </div>
         )}
 
-        {aiReady && suits[suitIdx] && (
+        {aiReady && currentSuit && (
           <HUD
             fps={fps}
             page={page}
-            suit={suits[suitIdx]}
+            suit={{ ...currentSuit, ...(suitAdjustments[currentSuit.path] || {}) }}
             suitIndex={suitIdx}
-            totalSuits={suits.length}
+            totalSuits={currentSuits.length}
             onPageChange={setPage}
-            onSwitchSuit={() => throttle('suit', () => setSuitIdx((i) => (i + 1) % suits.length))}
-            onSwitchSex={() => throttle('sex', () => {
-              const newSex = sex === 'M' ? 'F' : 'M';
-              setSex(newSex);
-              const firstIdx = SUIT_DATA.findIndex((s) => s.sex === newSex);
-              if (firstIdx !== -1) setSuitIdx(firstIdx);
-            })}
-            onAdjX={(d) => throttle('adjX', () => adjX(d), 100)}
-            onAdjY={(d) => throttle('adjY', () => adjY(d), 100)}
-            onResetX={() => throttle('resetX', resetX, 350)}
-            onResetY={() => throttle('resetY', resetY, 350)}
-            onAdjSX={(d) => throttle('adjSX', () => adjSX(d), 100)}
-            onAdjSY={(d) => throttle('adjSY', () => adjSY(d), 100)}
-            onResetStretch={() => throttle('resetStretch', resetStretch, 350)}
+            onSwitchSuit={() =>
+              throttle('suit', () =>
+                setSuitIdxBySex((prev) => ({
+                  ...prev,
+                  [sex]: (prev[sex] + 1) % currentSuits.length,
+                }))
+              )
+            }
+            onSwitchSex={() =>
+              throttle('sex', () => {
+                setSex((prev) => {
+                  const newSex = prev === 'M' ? 'F' : 'M';
+                  const firstIdx = getFirstSuitIndex(newSex);
+                  setSuitIdxBySex((idx) => ({ ...idx, [newSex]: firstIdx }));
+                  return newSex;
+                });
+              })
+            }
+            onAdjX={(d) => throttle('adjX', () => adjX(d), ADJUST_THROTTLE_MS)}
+            onAdjY={(d) => throttle('adjY', () => adjY(d), ADJUST_THROTTLE_MS)}
+            onResetX={() => throttle('resetX', resetX, THROTTLE_MS)}
+            onResetY={() => throttle('resetY', resetY, THROTTLE_MS)}
+            onAdjSX={(d) => throttle('adjSX', () => adjSX(d), ADJUST_THROTTLE_MS)}
+            onAdjSY={(d) => throttle('adjSY', () => adjSY(d), ADJUST_THROTTLE_MS)}
+            onResetStretch={() => throttle('resetStretch', resetStretch, THROTTLE_MS)}
           />
         )}
       </div>

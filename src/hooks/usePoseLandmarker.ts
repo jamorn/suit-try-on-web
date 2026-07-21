@@ -4,12 +4,17 @@ import { useEffect, useRef } from 'react';
 import { detectPose } from '@/lib/mediapipe';
 import type { PoseResult } from '@/lib/types';
 
-export function usePoseLandmarker(
-  videoRef: React.RefObject<HTMLVideoElement | null>,
-  isReady: boolean,
-  onPoseDetected: (result: PoseResult) => void,
-  onError?: (error: Error) => void
-) {
+export function usePoseLandmarker({
+  videoRef,
+  isReady,
+  onPoseDetected,
+  onError,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  isReady: boolean;
+  onPoseDetected: (result: PoseResult) => void;
+  onError?: (error: Error) => void;
+}) {
   const rafRef = useRef<number>(0);
   const onPoseDetectedRef = useRef(onPoseDetected);
   const onErrorRef = useRef(onError);
@@ -30,7 +35,6 @@ export function usePoseLandmarker(
         detecting = true;
         const ts = performance.now();
 
-        // ✅ Non-blocking detection — ไม่ await, ใช้ .then() + flag
         detectPose(video, ts)
           .then((r) => {
             detecting = false;
@@ -48,7 +52,6 @@ export function usePoseLandmarker(
       rafRef.current = requestAnimationFrame(loop);
     };
 
-    // ✅ Visibility handling — หยุด RAF เมื่อ tab ซ่อน
     const handleVisibility = () => {
       if (document.hidden) {
         cancelAnimationFrame(rafRef.current);
